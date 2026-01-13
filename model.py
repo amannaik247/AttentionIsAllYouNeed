@@ -118,7 +118,7 @@ class FeedForwardBlock(nn.Module):
 		# from the formula in the paper(ss of this in the notebook)
 		return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
 
-class MultiHeadAttention(nn.Module):
+class MultiHeadAttentionBlock(nn.Module):
 	def __init__(self, d_model, h, dropout: float) -> None:
 		'''
 		h -> number of heads
@@ -197,11 +197,38 @@ class MultiHeadAttention(nn.Module):
 
 
 class ResidualConnection(nn.Module):
-	def __init__(self, dropout):
+	'''
+	x --> data
+	sublayer --> multihead or feedforward (for encoder)
+
+	This gives the model an option to use or not use a layer
+	How? the forward function adds the original x with the 'learnt' x and if the learning is not useful
+	The model can just set its output to 0
+	'''
+	def __init__(self, features: int, dropout: float):
 		super().__init__()
 		self.dropout = nn.Dropout(dropout)
-		self.norm = LayerNormalization()
+		self.norm = LayerNormalization(features)
 
 	def forward(self, x, sublayer):
 		return x + self.dropout(sublayer(self.norm(x)))
-		 
+
+class EncoderBlock(nn.Module):
+	'''
+	This block contains 2 add and norm blocks, one multihead attention and one feedforward net
+	We create all the connections of these individual blocks here
+	'''
+
+	def __init__(
+		self, features: int, self_attention_block: MultiHeadAttentionBlock,
+		feed_forward_block: FeedForwardBlock, dropout: float
+		) -> None:
+		self.self_attention_block = self_attention_block # multihead
+		self.feed_forward_block = feed_forward_block
+		self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(2)])
+
+	def forward(self, x , src_mask):
+		x = self.residual_connections[0](x, lambda x: self.self_attention_block(x,x,x, src_mask))
+		x = self.residual_connections[1](x, self.feed_forward_block(x))
+		return x 
+
