@@ -232,3 +232,73 @@ class EncoderBlock(nn.Module):
 		x = self.residual_connections[1](x, self.feed_forward_block(x))
 		return x 
 
+class Encoder(nn.Module):
+	'''
+	The paper says you can have N encoder blocks so this class will define the no. of blocks
+	And how the data would travel through it
+	'''
+	def __init__(self, layers: nn.ModuleList):
+		super().__init__()
+		self.layers = layers
+		self.norm = LayerNormalization()
+
+	def forward(self, x, mask):
+		for layer in self.layers:
+			x = layer(x, mask)
+		return self.norm(x)
+
+class DecoderBlock(nn.Module):
+	'''
+	Refer the diagram of the transformer
+	- All components of decoder are similar to the encoder except the input and the mask source
+	- So we will reuse another instance of those components to build this
+
+	- src_mask: mask for the inputs(encoder mask)
+	- tgt_mask: mask for outputs(decoder mask)
+	'''
+	def __init__(self, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock,
+				feed_forward_block: FeedForwardBlock, dropout: float
+				):
+		super().__init__()
+		self.self_attention_block = self_attention_block
+		self.cross_attention_block = cross_attention_block
+		self.feed_forward_block = feed_forward_block
+		self.norm = LayerNormalization()
+		self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)]) # 3 because we have 3 skip connections(residuals)
+
+	def forward(self, x , enc_out, src_mask, tgt_mask):
+		x = self.residual_connections[0](x, lambda x: (x, x, x, self.self_attention_block))
+		x = self.residual_connections[1](x, lambda x: (x, enc_out, enc_out, self.cross_attention_block))
+		x = self.residual_connections[2](x, self.feed_forward_block)
+		
+		return x
+
+class Decoder(nn.Module):
+
+	def __init__(self, layers: nn.ModuleList):
+		super().__init__()
+		self.layers = layers
+		self.norm = LayerNormalization()
+
+	def forward(self, x, enc_out, src_mask, tgt_mask):
+		for layer in self.layers:
+			x = layer(x, enc_out, src_mask, tgt_mask)
+		return self.norm(x)
+
+class ProjectionLayer(nn.Module):
+	'''
+	This is the linear layer + softmax after the decoder output(check diagram)
+	Since this takes the dimensions of the decoder as input and maps it back to the vocab size of the data
+	Which will then be used to generate probabs of each word (after softmax)
+	- here we apply log softmax instead for numerical stability
+	'''
+
+	def __init__(self, d_model, vocab_size):
+		super().__init__()
+		self.proj = nn.Linear(d_model, vocab_size)
+
+	def forward(self, x):
+		# (batch, seq_len, d_model) --> (batch, seq_len, vocab_size)
+		return torch.log_softmax(self.proj(x), dim = -1)
+
+		
